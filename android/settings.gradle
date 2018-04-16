@@ -1,0 +1,3 @@
+rootProject.name = 'zhH2OSources'
+
+include ':app'
