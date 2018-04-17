@@ -23,6 +23,19 @@ function initDemoMap() {
     var map = L.map('map', {
         layers: [Esri_DarkGreyCanvas]
     });
+    var info = L.control();
+    info.onAdd = function (map) {
+		this._div = L.DomUtil.create('div', 'info');
+		this.update();
+		return this._div;
+	};
+
+	info.update = function (props) {
+		this._div.innerHTML = '<h4>Drink water source in Zurich</h4>' +
+			'<b>Enabe your location to get routed to the next one!</b><br />';
+	};
+
+	info.addTo(map);
 
     var layerControl = L.control.layers(baseLayers);
     layerControl.addTo(map);
