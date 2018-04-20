@@ -1,3 +1,11 @@
+// GLOABAL VARS 
+var directionsService = undefined;
+var geoJson = undefined;
+var markers = [];
+var map = undefined;
+var path = undefined;
+var curPosMarker = undefined;
+var DEFAULT_LAT_LNG = [47.40, 8.5353];
 
 function initDemoMap() {
 
@@ -32,14 +40,14 @@ function initDemoMap() {
 
 	info.update = function (props) {
 		this._div.innerHTML = '<h4>Drink water source in Zurich</h4>' +
-			'<b>Enabe your location to get routed to the next one!</b><br />';
+			'<b>Enabe your location to get routed to the next one or drag the green marker!</b><br />';
 	};
 
 	info.addTo(map);
 
     var layerControl = L.control.layers(baseLayers);
     layerControl.addTo(map);
-    map.setView([47.40, 8.5353], 15);
+    map.setView(DEFAULT_LAT_LNG, 15);
 
     return {
         map: map,
@@ -115,90 +123,119 @@ function shuffle(array) {
     return array;
 }
 
+function updateMarkers(latlng) {
+    // clear all drawn marker
+    markers.forEach(function(m) {
+        map.removeLayer(m);
+    });
+    markers = [];
+
+    // compute the distance to lat
+    geoJson.features.forEach(function (b) {
+        b.properties.distance = distVincenty(latlng.lat, latlng.lng, b.geometry.coordinates[1], b.geometry.coordinates[0]);
+    });
+
+    // sort by distnace
+    var sortByDistance = geoJson.features.sort(function (a, b) { return a.properties.distance - b.properties.distance; })
+
+    // take the first 25 
+    var closestPoints = sortByDistance.slice(0, 25);
+
+    // add them to the map
+    closestPoints.forEach(function (b) {
+        var curMarker = L.marker([b.geometry.coordinates[1], b.geometry.coordinates[0]]);
+        curMarker.addTo(map);
+        markers.push(curMarker);
+    });
+
+    // get the closest
+    var destination = closestPoints[0].geometry.coordinates;
+
+    // compute direction and add polyline
+    directionsService.route({
+        origin: new google.maps.LatLng(latlng.lat, latlng.lng),
+        destination: new google.maps.LatLng(destination[1], destination[0]),
+        travelMode: 'WALKING'
+    }, function (response, status) {
+        if (status === 'OK') {
+            console.log(response);
+            if(response.routes.length > 0) {
+                var overPolyline = response.routes[0].overview_polyline;
+                var latlngArr = polyline.decode(overPolyline);
+                
+                // remove the old polyline
+                if(path) {
+                    map.removeLayer(path);
+                }
+
+                path = new L.Polyline(latlngArr, {
+                    color: 'orange',
+                    weight: 3,
+                    opacity: 0.5,
+                    smoothFactor: 1
+                });
+                path.addTo(map);
+            }
+        } else {
+            console.log('Directions request failed due to ' + status);
+        }
+
+        // update the current position
+        curPosMarker.setLatLng(latlng);
+    });
+}
+
+
+
 function init() {
     // google direction stuff
-    var directionsService = new google.maps.DirectionsService;
+    directionsService = new google.maps.DirectionsService;
 
-
+    // create the map
     var mapStuff = initDemoMap();
-    var map = mapStuff.map;
+    map = mapStuff.map;
     var layerControl = mapStuff.layerControl;
-    var geoJson = undefined;
+
+    // create the current position marker
+    var greenIcon = new L.Icon({
+        iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+    });
+    curPosMarker = L.marker(DEFAULT_LAT_LNG, { icon: greenIcon, draggable: true });
+    
+    // make marker draggable and recompute
+    curPosMarker.on("moveend", function(e){
+        updateMarkers(curPosMarker._latlng);
+    });
+    curPosMarker.addTo(map);
+    
+    
     // load data (u, v grids) from somewhere (e.g. https://github.com/danwild/wind-js-server)
     $.getJSON('h2o.json', function (data) {
         geoJson = data;
-
-        navigator.geolocation.getCurrentPosition(function (location) {
-            var latlng = new L.LatLng(location.coords.latitude, location.coords.longitude);
-            // compute the distance to the current location 
-            geoJson.features.forEach(function (b) {
-                b.properties.distance = distVincenty(location.coords.latitude, location.coords.longitude,
-                    b.geometry.coordinates[1], b.geometry.coordinates[0]);
+        if(navigator.geolocation) {       
+            navigator.geolocation.getCurrentPosition(function (location) {
+                var latlng = new L.LatLng(location.coords.latitude, location.coords.longitude);
+                // compute the distance to the current location 
+                map.panTo(latlng);
+                updateMarkers(latlng);
+                
+                
+            }, function () {
+                var latlng = new L.LatLng(DEFAULT_LAT_LNG[0], DEFAULT_LAT_LNG[1]);
+                updateMarkers(latlng);
             });
-
-            // sort by distnace
-            var sortByDistance = geoJson.features.sort(function (a, b) { return a.properties.distance - b.properties.distance; })
-
-            // take the first 25 
-            var closestPoints = sortByDistance.slice(0, 25);
-
-            // add them to the map
-            closestPoints.forEach(function (b) {
-                L.marker([b.geometry.coordinates[1], b.geometry.coordinates[0]]).addTo(map);
-            });
-
-            // get the closest
-            var destination = closestPoints[0].geometry.coordinates;
-
-            // compute direction 
-            directionsService.route({
-                origin: new google.maps.LatLng(location.coords.latitude, location.coords.longitude),
-                destination: new google.maps.LatLng(destination[1], destination[0]),
-                travelMode: 'WALKING'
-            }, function (response, status) {
-                if (status === 'OK') {
-                    console.log(response);
-                    if(response.routes.length > 0) {
-                        var overPolyline = response.routes[0].overview_polyline;
-                        var latlngArr = polyline.decode(overPolyline);
-
-                        var firstpolyline = new L.Polyline(latlngArr, {
-                            color: 'orange',
-                            weight: 3,
-                            opacity: 0.5,
-                            smoothFactor: 1
-                        });
-                        firstpolyline.addTo(map);
-                    }
-                } else {
-                    console.log('Directions request failed due to ' + status);
-                }
-
-                // add polyline
-
-                var greenIcon = new L.Icon({
-                    iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-                    iconSize: [25, 41],
-                    iconAnchor: [12, 41],
-                    popupAnchor: [1, -34],
-                    shadowSize: [41, 41]
-                });
-                L.marker(latlng, { icon: greenIcon }).addTo(map);
-                map.setView(latlng, 18);
-            });
-        }, function () {
-            // return hundert random points
-            var randomShuffel = shuffle(geoJson.features).slice(0, 25);
-            randomShuffel.forEach(function (b) {
-                L.marker([b.geometry.coordinates[1], b.geometry.coordinates[0]]).addTo(map);
-            });
-        });
+        } else {
+            var latlng = new L.LatLng(DEFAULT_LAT_LNG[0], DEFAULT_LAT_LNG[1]);
+            updateMarkers(latlng);
+        }
     });
-
-
 }
-// d
+
 
 
 
